@@ -80,3 +80,13 @@ logs/
 .claude/
 CLAUDE.md
 CLAUDE.local.md
+
+# ===== Airflow =====
+airflow.db
+airflow.cfg
+airflow-webserver.pid
+standalone_admin_password.txt
+webserver_config.py
+airflow_home/
+plugins/__pycache__/
+dags/__pycache__/
