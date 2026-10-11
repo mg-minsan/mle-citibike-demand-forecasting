@@ -1,11 +1,11 @@
-name: mle-assignment-1
+name: mle-citibike-demand-forecasting
 
 services:
   jupyter:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mle-assignment-1-jupyter
+    container_name: mle--citibike-demand-forecasting-jupyter
     ports:
       - "8888:8888"
     volumes:
