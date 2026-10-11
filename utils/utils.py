@@ -29,9 +29,9 @@ def partition_path(directory, prefix, snapshot_date_str, extension):
     return os.path.join(directory, partition_name(prefix, snapshot_date_str, extension))
 
 
-def read_csv_partition(directory, prefix, snapshot_date_str, spark):
+def read_csv_partition(directory, prefix, snapshot_date_str, spark, infer_schema=True):
     filepath = partition_path(directory, prefix, snapshot_date_str, '.csv')
-    df = spark.read.csv(filepath, header=True, inferSchema=True)
+    df = spark.read.csv(filepath, header=True, inferSchema=infer_schema)
     print('loaded from:', filepath, 'row count:', df.count())
     return df
 

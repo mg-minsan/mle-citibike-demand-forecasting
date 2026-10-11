@@ -1,13 +1,15 @@
-from datetime import datetime
-
 import pyspark.sql.functions as F
-from pyspark.sql.types import DoubleType, TimestampType
-from utils.utils import read_csv_partition, write_parquet_partition, read_parquet_partition
+
+from utils.utils import write_parquet_partition, read_parquet_partition
+from utils.weather_validation import configure_weather_timezone, validate_hourly_weather
 
 
 
 def process_gold_weather_table(snapshot_date_str, silver_weather_directory,  gold_weather_directory,  spark):
+    timezone = configure_weather_timezone(spark)
     df = read_parquet_partition(silver_weather_directory, "silver_weather_", snapshot_date_str, spark)
+    # Reject duplicates and incomplete measurements before they distort totals.
+    validate_hourly_weather(df, snapshot_date_str, timezone)
     agg_df = (
         df 
         .groupBy(F.to_date("time").alias("snapshot_date"))
@@ -34,7 +36,7 @@ def process_gold_weather_table(snapshot_date_str, silver_weather_directory,  gol
             F.count("temperature_c").alias("temperature_hours"),
             F.count("precipitation_mm").alias("precipitation_hours"),
         )
-        .orderBy("date")
+        .orderBy("snapshot_date")
     )
     return write_parquet_partition(agg_df, gold_weather_directory, "gold_weather_", snapshot_date_str)
 
