@@ -79,6 +79,7 @@ logs/
 # ===== Claude Code =====
 .claude/
 CLAUDE.md
+AGENT.md
 CLAUDE.local.md
 
 # ===== Airflow =====
