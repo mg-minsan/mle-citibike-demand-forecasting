@@ -1,6 +1,19 @@
 import glob
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+
+
+def generate_daily_dates(start_date_str, end_date_str):
+    """Return every date in the inclusive range, without rounding to month start."""
+    start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+    end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+    if start_date > end_date:
+        raise ValueError("Start date must be on or before end date.")
+
+    return [
+        (start_date + timedelta(days=offset)).strftime("%Y-%m-%d")
+        for offset in range((end_date - start_date).days + 1)
+    ]
 
 
 def generate_first_of_month_dates(start_date_str, end_date_str):
