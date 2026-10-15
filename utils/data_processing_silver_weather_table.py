@@ -1,5 +1,5 @@
 import pyspark.sql.functions as F
-from pyspark.sql.types import DoubleType, TimestampType
+from pyspark.sql.types import DoubleType, TimestampNTZType
 from utils.utils import read_csv_partition, write_parquet_partition
 from utils.weather_validation import configure_weather_timezone, validate_hourly_weather
 
@@ -30,7 +30,8 @@ def process_silver_weather_table(snapshot_date_str, bronze_weather_directory,  s
         df = df.withColumnRenamed(original_name, new_name)
 
     column_type_map = {
-        "time": TimestampType(),
+        # The CSV already supplies local clock labels; do not shift them for DST.
+        "time": TimestampNTZType(),
         "temperature_c": DoubleType(),
         "precipitation_mm": DoubleType(),
         "rain_mm": DoubleType(),

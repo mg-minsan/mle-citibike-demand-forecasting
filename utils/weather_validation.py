@@ -1,10 +1,11 @@
-"""Timezone configuration and validation for monthly hourly weather partitions."""
+"""Timezone configuration and validation for daily hourly weather partitions."""
 
 import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pyspark.sql.functions as F
+from pyspark.sql.types import TimestampNTZType
 
 
 WEATHER_MEASUREMENTS = [
@@ -15,17 +16,12 @@ WEATHER_MEASUREMENTS = [
 
 
 def configure_weather_timezone(spark):
-    """Use a verified source timezone, never the machine's implicit timezone.
+    """Configure the source timezone, defaulting to America/New_York.
 
-    Daily Gold dates use this same timezone. If NYC dates differ from the
-    source dates, conversion and cross-month boundary reads are required.
+    The CSV's local-clock timestamps use timestamp_ntz, so this setting does
+    not convert or DST-adjust them. Gold preserves their supplied dates.
     """
-    timezone = os.environ.get("WEATHER_SOURCE_TIMEZONE")
-    if not timezone:
-        raise ValueError(
-            "Set WEATHER_SOURCE_TIMEZONE to the verified source timezone "
-            "(e.g. UTC or America/New_York); the CSV does not identify it."
-        )
+    timezone = os.environ.get("WEATHER_SOURCE_TIMEZONE") or "America/New_York"
     try:
         ZoneInfo(timezone)
     except ZoneInfoNotFoundError as exc:
@@ -37,8 +33,9 @@ def configure_weather_timezone(spark):
 def validate_hourly_weather(df, snapshot_date_str, timezone):
     """Reject missing, duplicate, off-hour, and out-of-partition observations.
 
-    Verify the complete month, including entirely missing days and DST days.
-    Raise before publishing incomplete Silver or Gold outputs.
+    Local-clock (timestamp_ntz) inputs require 24 distinct hourly labels per
+    supplied date, without DST adjustment. Absolute timestamps retain DST-aware
+    coverage checks. Raise before publishing incomplete Silver or Gold outputs.
     """
     required = ["time", *WEATHER_MEASUREMENTS]
     missing = sorted(set(required) - set(df.columns))
@@ -51,29 +48,37 @@ def validate_hourly_weather(df, snapshot_date_str, timezone):
         invalid = invalid | value.isNull() | F.isnan(value) | (F.abs(value) == float("inf"))
     if df.filter(invalid).limit(1).count():
         raise ValueError("Weather contains null/invalid timestamps or measurements after casting.")
-    if df.filter(F.col("time") != F.date_trunc("hour", "time")).limit(1).count():
+    # Inspect clock labels without implicitly casting timestamp_ntz to an instant.
+    whole_hour = F.col("time").cast("string").rlike(r"^\d{4}-\d{2}-\d{2} \d{2}:00:00$")
+    if df.filter(~whole_hour).limit(1).count():
         raise ValueError("Weather timestamps must align to whole hours.")
+    local_clock = isinstance(df.schema["time"].dataType, TimestampNTZType)
     if df.groupBy("time").count().filter(F.col("count") > 1).limit(1).count():
-        raise ValueError("Duplicate hourly weather timestamps.")
+        if local_clock:
+            raise ValueError("Duplicate hourly weather timestamps in the supplied local clock.")
+        raise ValueError(
+            "Duplicate hourly weather timestamps. Timestamp casting can create duplicates "
+            "when the configured source timezone has a DST gap (e.g. New York 02:00 "
+            "becomes 03:00). Verify WEATHER_SOURCE_TIMEZONE / --timezone against the "
+            "source metadata; do not drop rows to bypass this check."
+        )
 
-    # Absolute instants distinguish repeated local hours during the DST fallback.
     snapshot = datetime.strptime(snapshot_date_str, "%Y-%m-%d")
-    start = datetime(snapshot.year, snapshot.month, 1, tzinfo=ZoneInfo(timezone))
-    if snapshot.month == 12:
-        end = datetime(snapshot.year + 1, 1, 1, tzinfo=ZoneInfo(timezone))
+    if local_clock:
+        outside_day = F.to_date("time") != F.lit(snapshot.date())
+        expected_hours = 24
     else:
-        end = datetime(snapshot.year, snapshot.month + 1, 1, tzinfo=ZoneInfo(timezone))
-    start_epoch, end_epoch = int(start.timestamp()), int(end.timestamp())
-    epoch = F.col("time").cast("long")
-    if df.filter((epoch < start_epoch) | (epoch >= end_epoch)).limit(1).count():
-        raise ValueError("Weather contains timestamps outside the requested month.")
+        # Absolute instants distinguish repeated local hours during DST fallback.
+        start = snapshot.replace(tzinfo=ZoneInfo(timezone))
+        end = start + timedelta(days=1)
+        start_epoch, end_epoch = int(start.timestamp()), int(end.timestamp())
+        epoch = F.col("time").cast("long")
+        outside_day = (epoch < start_epoch) | (epoch >= end_epoch)
+        expected_hours = (end_epoch - start_epoch) // 3600
+    if df.filter(outside_day).limit(1).count():
+        raise ValueError("Weather contains timestamps outside the requested day.")
 
-    expected = []
-    day = start
-    while day < end:
-        next_day = day + timedelta(days=1)
-        expected.append((day.date(), int((next_day.timestamp() - day.timestamp()) / 3600)))
-        day = next_day
+    expected = [(snapshot.date(), expected_hours)]
     expected_df = df.sparkSession.createDataFrame(expected, "snapshot_date date, expected_hours long")
     actual = df.groupBy(F.to_date("time").alias("snapshot_date")).agg(
         F.count("*").alias("hourly_rows")
@@ -82,4 +87,4 @@ def validate_hourly_weather(df, snapshot_date_str, timezone):
         F.col("hourly_rows").isNull() | (F.col("hourly_rows") != F.col("expected_hours"))
     )
     if incomplete.limit(1).count():
-        raise ValueError("Incomplete daily weather coverage in the requested month (DST-aware).")
+        raise ValueError("Incomplete hourly weather coverage in the requested day.")

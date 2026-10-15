@@ -10,12 +10,12 @@ from utils.weather_validation import configure_weather_timezone
 def process_bronze_weather_table(snapshot_date_str, bronze_weather_directory, spark):
     configure_weather_timezone(spark)
     snapshot_date = datetime.strptime(snapshot_date_str, "%Y-%m-%d")
-    year_month = snapshot_date.strftime("%Y-%m")
+    snapshot_day = snapshot_date.strftime("%Y-%m-%d")
 
     csv_file_path = "data/NYC_Weather_2016_2022.csv"
     # Preserve source strings; timestamp parsing belongs in Silver.
     sdf = spark.read.csv(csv_file_path, header=True, inferSchema=False).filter(
-        F.col("time").startswith(year_month)
+        F.col("time").startswith(snapshot_day)
     )
     print(f"Processing bronze weather table for snapshot date: {snapshot_date_str}")
     print(f"Number of records: {sdf.count()}")

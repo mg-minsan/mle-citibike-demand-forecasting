@@ -18,6 +18,7 @@ def process_gold_weather_table(snapshot_date_str, silver_weather_directory,  gol
             F.median("temperature_c").alias("med_temperature_c"),
             F.max("temperature_c").alias("max_temperature_c"),
             F.min("temperature_c").alias("min_temperature_c"),
+            (F.max("temperature_c") - F.min("temperature_c")).alias("temperature_range_c"),
 
             F.sum("precipitation_mm").alias("total_precipitation_mm"),
             F.sum("rain_mm").alias("total_rain_mm"),
