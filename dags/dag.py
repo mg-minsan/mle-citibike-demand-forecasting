@@ -43,5 +43,39 @@ with DAG(
                       )
     )
 
+    bronze_holidays_table = BashOperator(
+        task_id='bronze_holidays_table',
+        bash_command=('cd /app && '
+                      'PYTHONPATH=/app python3 scripts/bronze_holidays_table.py '
+                      '--snapshotdate {{ ds }}'
+                      )
+    )
+
+    silver_holidays_table = BashOperator(
+        task_id='silver_holidays_table',
+        bash_command=('cd /app && '
+                      'PYTHONPATH=/app python3 scripts/silver_holidays_table.py '
+                      '--snapshotdate {{ ds }}'
+                      )
+    )
+
+    bronze_events_table = BashOperator(
+        task_id='bronze_events_table',
+        bash_command=('cd /app && '
+                      'PYTHONPATH=/app python3 scripts/bronze_events_table.py '
+                      '--snapshotdate {{ ds }}'
+                      )
+    )
+
+    silver_events_table = BashOperator(
+        task_id='silver_events_table',
+        bash_command=('cd /app && '
+                      'PYTHONPATH=/app python3 scripts/silver_events_table.py '
+                      '--snapshotdate {{ ds }}'
+                      )
+    )
+
     bronze_weather_table >> silver_weather_table >> gold_weather_table
+    bronze_holidays_table >> silver_holidays_table
+    bronze_events_table >> silver_events_table
 

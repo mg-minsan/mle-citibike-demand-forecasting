@@ -5,6 +5,10 @@ from utils.utils import generate_daily_dates
 from utils.data_processing_bronze_weather_table import process_bronze_weather_table 
 from utils.data_processing_silver_weather_table import  process_silver_weather_table
 from utils.data_processing_gold_weather_table import process_gold_weather_table
+from utils.data_processing_bronze_holidays_table import process_bronze_holidays_table
+from utils.data_processing_silver_holidays_table import process_silver_holidays_table
+from utils.data_processing_bronze_events_table import process_bronze_events_table
+from utils.data_processing_silver_events_table import process_silver_events_table
 
 import argparse
 import os
@@ -56,7 +60,20 @@ def main(argv=None):
     if not os.path.exists(gold_weather_directory):
         os.makedirs(gold_weather_directory)
 
+    bronze_holidays_directory = "datamart/bronze/bronze_holidays"
+    silver_holidays_directory = "datamart/silver/silver_holidays"
+    bronze_events_directory = "datamart/bronze/bronze_events"
+    silver_events_directory = "datamart/silver/silver_events"
+    for directory in (bronze_holidays_directory, silver_holidays_directory,
+                      bronze_events_directory, silver_events_directory):
+        os.makedirs(directory, exist_ok=True)
+
     for snapshot_date_str in daily_dates:
+        process_bronze_holidays_table(snapshot_date_str, bronze_holidays_directory, spark)
+        process_silver_holidays_table(snapshot_date_str, bronze_holidays_directory, silver_holidays_directory, spark)
+        process_bronze_events_table(snapshot_date_str, bronze_events_directory, spark)
+        process_silver_events_table(snapshot_date_str, bronze_events_directory, silver_events_directory, spark)
+
         process_bronze_weather_table(snapshot_date_str, bronze_weather_directory, spark)
         process_silver_weather_table(snapshot_date_str, bronze_weather_directory, silver_weather_directory, spark)
         process_gold_weather_table(snapshot_date_str, silver_weather_directory, gold_weather_directory, spark)
