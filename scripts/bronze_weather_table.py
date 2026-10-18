@@ -5,7 +5,7 @@ import pyspark
 from utils.data_processing_bronze_weather_table import process_bronze_weather_table
 
 def main(snapshotdate):
-    bronze_weather_directory = "datamart/bronze/bronze_weather"
+    bronze_weather_directory = "datamart/bronze/weather/"
     os.makedirs(bronze_weather_directory, exist_ok=True)
 
     # Initialize SparkSession

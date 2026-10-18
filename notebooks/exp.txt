@@ -1,0 +1,7 @@
+missing start_time — the trip has no start date/time. We can’t tell which day it belongs to, so it can’t be counted.
+missing start or end station id — we don’t know which station the bike left from or went to, so we can’t count it for any station.
+start_time not on snapshot date — the trip belongs to a different day than the file being processed. It’s removed so no trip gets counted on the wrong day or twice.
+trip_duration missing, under 60s or over 24h — trips under a minute are usually false starts (someone took a bike and docked it straight back). Trips over a day are usually lost, stolen or broken bikes, not real rides.
+depot / test / warehouse station (new) — the trip started or ended at a Citi Bike depot, test or warehouse station. These are staff moving bikes for repair or rebalancing, not customer demand.
+station coordinates missing, zero or outside NYC — a station’s location is blank, 0,0, or somewhere outside New York. That means the record is broken.
+exact duplicates — the same trip appears twice, word for word. Only one copy is kept, so demand isn’t double-counted.

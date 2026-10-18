@@ -7,7 +7,7 @@ from utils.data_processing_gold_weather_table import process_gold_weather_table
 
 
 def main(snapshotdate):
-    gold_weather_directory = "datamart/gold/gold_weather"
+    gold_weather_directory = "datamart/gold/weather/"
     os.makedirs(gold_weather_directory, exist_ok=True)
 
     spark = (
@@ -21,7 +21,7 @@ def main(snapshotdate):
         print(f"Processing gold weather table for snapshot date: {snapshotdate}")
         process_gold_weather_table(
             snapshotdate,
-            "datamart/silver/silver_weather",
+            "datamart/silver/weather/",
             gold_weather_directory,
             spark,
         )
