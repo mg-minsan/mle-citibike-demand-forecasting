@@ -88,3 +88,33 @@ def validate_hourly_weather(df, snapshot_date_str, timezone):
     )
     if incomplete.limit(1).count():
         raise ValueError("Incomplete hourly weather coverage in the requested day.")
+
+
+def validate_weather_dates(df, expected_dates, timezone):
+    """Validate a batch of complete daily partitions with one aggregation.
+
+    Missing files are handled by the caller; existing empty, malformed,
+    duplicate or off-date daily files must not silently reduce coverage.
+    """
+    missing = sorted({'time', *WEATHER_MEASUREMENTS} - set(df.columns))
+    if missing:
+        raise ValueError(f'Missing weather columns: {missing}')
+    invalid = F.col('time').isNull() | ~F.col('time').cast('string').rlike(
+        r'^\d{4}-\d{2}-\d{2} \d{2}:00:00$')
+    for name in WEATHER_MEASUREMENTS:
+        value = F.col(name)
+        invalid = invalid | value.isNull() | F.isnan(value) | (F.abs(value) == float('inf'))
+    local_clock = isinstance(df.schema['time'].dataType, TimestampNTZType)
+    expected = {}
+    for day in expected_dates:
+        start = datetime.combine(day, datetime.min.time(), tzinfo=ZoneInfo(timezone))
+        end = start + timedelta(days=1)
+        expected[day] = 24 if local_clock else int((end.timestamp() - start.timestamp()) // 3600)
+    rows = df.groupBy(F.to_date('time').alias('day')).agg(
+        F.count('*').alias('hours'), F.countDistinct('time').alias('distinct_hours'),
+        F.count(F.when(invalid, 1)).alias('invalid_rows'),
+    ).collect()
+    if (set(row.day for row in rows) != set(expected) or
+            any(row.hours != expected[row.day] or row.distinct_hours != expected[row.day]
+                or row.invalid_rows for row in rows)):
+        raise ValueError('Invalid or incomplete hourly weather coverage in daily history partitions')

@@ -91,3 +91,6 @@ webserver_config.py
 airflow_home/
 plugins/__pycache__/
 dags/__pycache__/
+
+# Monthly pipeline outputs
+datamart_monthly/

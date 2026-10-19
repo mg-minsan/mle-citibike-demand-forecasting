@@ -16,7 +16,7 @@ with DAG(
     description='data pipeline run daily',
     schedule_interval='0 6 * * *',  
     start_date=datetime(2016, 1, 1),
-    end_date=datetime(2017, 12, 31),
+    end_date=datetime(2017,12, 31),
     catchup=True,
 ) as dag:
     bronze_weather_table = BashOperator(
@@ -35,13 +35,41 @@ with DAG(
                       )
     )
 
-    gold_weather_table = BashOperator(
-        task_id='gold_weather_table',
+    bronze_trips = BashOperator(
+        task_id='bronze_trips',
         bash_command=('cd /app && '
-                      'PYTHONPATH=/app python3 scripts/gold_weather_table.py '
+                      'PYTHONPATH=/app python3 scripts/bronze_trips.py '
                       '--snapshotdate {{ ds }}'
                       )
     )
 
-    bronze_weather_table >> silver_weather_table >> gold_weather_table
+    silver_trips = BashOperator(
+        task_id='silver_trips',
+        bash_command=('cd /app && '
+                      'PYTHONPATH=/app python3 scripts/silver_trips.py '
+                      '--snapshotdate {{ ds }}'
+                      )
+    )
+
+    gold_label_store = BashOperator(
+        task_id='gold_label_store',
+        bash_command=('cd /app && '
+                      'PYTHONPATH=/app python3 scripts/gold_label_store.py '
+                      '--snapshotdate {{ ds }}'
+                      )
+    )
+
+    gold_feature_store = BashOperator(
+        task_id='gold_feature_store',
+        bash_command=('cd /app && '
+                      'PYTHONPATH=/app python3 scripts/gold_feature_store.py '
+                      '--snapshotdate {{ ds }}'
+                      )
+    )
+
+    bronze_weather_table >> silver_weather_table
+    bronze_trips >> silver_trips
+    silver_trips >> gold_label_store
+    silver_trips >> gold_feature_store
+    silver_weather_table >> gold_feature_store
 
