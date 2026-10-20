@@ -9,7 +9,7 @@ import pyspark.sql.functions as F
 from pyspark.sql.functions import col
 from pyspark.sql.types import StringType, IntegerType, DoubleType, DateType
 
-from utils.data_processing_gold_weather_table import build_weekly_weather_features
+from utils.data_processing_gold_weather_table import build_daily_weather_features
 from utils.weather_features import WEATHER_FEATURE_COLUMNS
 from utils.holiday_features import add_holiday_features
 
@@ -19,8 +19,8 @@ from utils.holiday_features import add_holiday_features
 ACTIVE_WINDOW_DAYS = 28
 
 def join_weather_features(features, snapshot_date_str, silver_weather_directory, spark):
-    """Join previous-seven-day weather to stations without removing station rows."""
-    weather = build_weekly_weather_features(snapshot_date_str, silver_weather_directory, spark)
+    """Join same-day weather to stations without removing station rows."""
+    weather = build_daily_weather_features(snapshot_date_str, silver_weather_directory, spark)
     return features.join(F.broadcast(weather), on="snapshot_date", how="left")
 
 

@@ -16,7 +16,7 @@ with DAG(
     description='data pipeline run daily',
     schedule_interval='0 6 * * *',  
     start_date=datetime(2016, 1, 1),
-    end_date=datetime(2017,12, 31),
+    end_date=datetime(2016,1, 5),
     catchup=True,
 ) as dag:
     bronze_weather_table = BashOperator(

@@ -94,3 +94,8 @@ dags/__pycache__/
 
 # Monthly pipeline outputs
 datamart_monthly/
+
+# Local MLflow tracking database
+mlflow.db
+mlflow.db-shm
+mlflow.db-wal
