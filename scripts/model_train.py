@@ -109,6 +109,37 @@ def last_best_params(model_name, through_str):
     return found
 
 
+def write_json_atomic(path, content):
+    # write to a temporary file first, then rename, so a crash never leaves a half-written file
+    with open(path + ".tmp", "w") as handle:
+        json.dump(content, handle, indent=2)
+    os.replace(path + ".tmp", path)
+
+
+def record_promotion(entry):
+    # add a champion history entry; skipped if that version is already there, so a repair or rerun never duplicates it
+    history = read_history()
+    if entry["version"] not in [item["version"] for item in history]:
+        write_json_atomic(HISTORY_PATH, history + [entry])
+
+
+def saved_model_state(through_str):
+    # what an earlier run left for this cutoff: "none", "complete", "history missing" (model and json saved but the
+    # promotion was never recorded) or "incomplete" (a pickle without readable json)
+    pickles = glob.glob(os.path.join(MODEL_BANK_DIR, "*_trained_through_" + through_str + ".pkl"))
+    if len(pickles) == 0:
+        return None, "none"
+    version = os.path.basename(pickles[0])[:-len(".pkl")]
+    try:
+        with open(os.path.join(MODEL_BANK_DIR, version + ".json")) as handle:
+            info = json.load(handle)
+    except (OSError, ValueError):
+        return version, "incomplete"
+    if info["promoted"] and version not in [item["version"] for item in read_history()]:
+        return version, "history missing"
+    return version, "complete"
+
+
 def main(snapshotdate):
     print('\n\n---starting job---\n\n')
 
@@ -116,9 +147,21 @@ def main(snapshotdate):
     trained_through = snapshot - timedelta(days=1)
     through_str = trained_through.strftime("%Y-%m-%d")
 
-    if len(glob.glob(os.path.join(MODEL_BANK_DIR, "*_trained_through_" + through_str + ".pkl"))) > 0:
-        print("a model trained through", through_str, "is already in the model bank, nothing to do")
+    version, state = saved_model_state(through_str)
+    if state == "complete":
+        print("a complete model trained through", through_str, "is already in the model bank, nothing to do")
         return
+    if state == "history missing":
+        with open(os.path.join(MODEL_BANK_DIR, version + ".json")) as handle:
+            info = json.load(handle)
+        record_promotion({"effective_from": info["retrained_on"], "version": version,
+                          "trained_through": through_str, "test_mae": info["test_model_mae"]})
+        print("repaired: recorded the promotion of", version, "that an earlier run did not write")
+        return
+    if state == "incomplete":
+        print("found an incomplete model for", through_str, "- removing it and training again")
+        for leftover in glob.glob(os.path.join(MODEL_BANK_DIR, version + ".*")):
+            os.remove(leftover)
 
     # three windows, walking back from the cutoff:
     # test = the last month, validation = the month before it, train = everything earlier
@@ -209,9 +252,10 @@ def main(snapshotdate):
                        if isinstance(v, (int, float, str, bool)) and v == v}   # v == v drops NaN
     version = best_name.replace(" ", "_").replace("(", "").replace(")", "") + "_trained_through_" + through_str
     os.makedirs(MODEL_BANK_DIR, exist_ok=True)
-    joblib.dump(final_model, os.path.join(MODEL_BANK_DIR, version + ".pkl"))
-    with open(os.path.join(MODEL_BANK_DIR, version + ".json"), "w") as handle:
-        json.dump({
+    pkl_path = os.path.join(MODEL_BANK_DIR, version + ".pkl")
+    joblib.dump(final_model, pkl_path + ".tmp")
+    os.replace(pkl_path + ".tmp", pkl_path)
+    write_json_atomic(os.path.join(MODEL_BANK_DIR, version + ".json"), {
             "model": best_name,
             "trained_from": TRAIN_START,
             "trained_through": through_str,
@@ -237,14 +281,12 @@ def main(snapshotdate):
             "tuning": tuning_summary,
             "tuning_seed": seed,
             "hyperparameters": hyperparameters,
-        }, handle, indent=2)
-    print("saved model to:", os.path.join(MODEL_BANK_DIR, version + ".pkl"))
+        })
+    print("saved model to:", pkl_path)
 
     if promote:
-        history = read_history() + [{"effective_from": snapshotdate, "version": version,
-                                     "trained_through": through_str, "test_mae": round(test_mae, 3)}]
-        with open(HISTORY_PATH, "w") as handle:
-            json.dump(history, handle, indent=2)
+        record_promotion({"effective_from": snapshotdate, "version": version,
+                          "trained_through": through_str, "test_mae": round(test_mae, 3)})
         print("promoted to champion from", snapshotdate)
     else:
         print("not promoted, the champion stays")

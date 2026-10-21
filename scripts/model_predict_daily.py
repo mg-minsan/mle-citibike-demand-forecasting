@@ -38,12 +38,15 @@ def pick_model_path(snapshot_date_str):
         in_place = [entry for entry in history if entry["effective_from"] <= snapshot_date_str]
         if len(in_place) > 0:
             latest = max(in_place, key=lambda entry: entry["effective_from"])
-            return os.path.join(MODEL_BANK_DIR, latest["version"] + ".pkl")
+            path = os.path.join(MODEL_BANK_DIR, latest["version"] + ".pkl")
+            if not (os.path.exists(path) and os.path.exists(path[:-len(".pkl")] + ".json")):
+                raise FileNotFoundError("champion " + latest["version"] + " is in the history but its files are incomplete")
+            return path
     # 2. no history yet: use the latest model trained before the snapshot date
     candidates = []
     for path in glob.glob(os.path.join(MODEL_BANK_DIR, "*_trained_through_*.pkl")):
         trained_through = re.search(r"_trained_through_(\d{4}-\d{2}-\d{2})\.pkl$", path).group(1)
-        if trained_through < snapshot_date_str:
+        if trained_through < snapshot_date_str and os.path.exists(path[:-len(".pkl")] + ".json"):
             candidates.append((trained_through, path))
     if len(candidates) == 0:
         raise FileNotFoundError("no model in " + MODEL_BANK_DIR + " trained before " + snapshot_date_str)
