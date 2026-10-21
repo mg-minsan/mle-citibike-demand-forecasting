@@ -18,6 +18,7 @@ from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardSc
 from xgboost import XGBRegressor
 
 import utils.data_loading_model_train as loader
+import utils.model_tuning as tuning
 from utils.station_profile import StationProfile
 
 # PURPOSE
@@ -29,6 +30,8 @@ from utils.station_profile import StationProfile
 #        train      = everything from 30 Jan 2016 up to the validation month
 #   2. VALIDATION: fit all three candidates on train, score each on the validation month (and the baseline
 #      fe_lag_7), pick the lowest MAE
+#   2b. TUNING: search settings for the winning model type only (about 10 trials, walk-forward folds on data before
+#       the test month, last month's settings kept unless clearly beaten)
 #   3. TEST: score the winner (fitted on train only) once on the test month, record that MAE
 #   4. FINAL: refit the winner on ALL data up to the day before the snapshot date and save it as
 #      <model>_trained_through_<day before snapshot>.pkl (+ a .json with training info, all three validation
@@ -92,6 +95,20 @@ def score_champion(champion, test_df, label):
     return mean_absolute_error(test_df[label], model.predict(test_df[features]))
 
 
+def last_best_params(model_name, through_str):
+    # the settings chosen the last time this model type was tuned (None the first time), read from the newest json
+    # in the bank that was trained before this cutoff, so a rerun of an old month never sees later months
+    found = None
+    for path in sorted(glob.glob(os.path.join(MODEL_BANK_DIR, "*.json"))):
+        if os.path.basename(path) == "champion_history.json":
+            continue
+        with open(path) as handle:
+            info = json.load(handle)
+        if info.get("model") == model_name and info.get("params") and info["trained_through"] < through_str:
+            found = info["params"]
+    return found
+
+
 def main(snapshotdate):
     print('\n\n---starting job---\n\n')
 
@@ -146,10 +163,17 @@ def main(snapshotdate):
     best_name = min(valid_mae, key=valid_mae.get)
     print("picked:", best_name)
 
-        # 2. TEST: refit the winner on train + validation (the same data the champion had) and score it once on the test month
-    unfitted_winner = clone(candidates[best_name])
-    del candidates, model                        # free the fitted models
+    # 2. TUNING: search settings for the winning model type, using only data before the test month
     train_valid_df = pd.concat([train_df, valid_df], ignore_index=True)
+    seed = int(through_str.replace("-", ""))
+    print(f"\ntuning {best_name} (walk-forward folds ending at the validation month)")
+    params, tuning_summary = tuning.tune(best_name, candidates[best_name], train_valid_df, MODEL_INPUTS, label,
+                                         fmt(valid_start), seed, last_best_params(best_name, through_str))
+    print(f"chosen: {tuning_summary['chosen_kind']} | tuning MAE {tuning_summary['chosen_mae']:.3f} vs defaults {tuning_summary['default_mae']:.3f}")
+    unfitted_winner = clone(candidates[best_name]).set_params(**params)
+    del candidates, model                        # free the fitted models
+
+    # 3. TEST: refit the winner on train + validation (the same data the champion had) and score it once on the test month
     scored_model = clone(unfitted_winner)
     scored_model.fit(train_valid_df[MODEL_INPUTS], train_valid_df[label])
     test_pred = scored_model.predict(test_df[MODEL_INPUTS])
@@ -180,6 +204,9 @@ def main(snapshotdate):
     final_model = clone(unfitted_winner)
     final_model.fit(all_df[MODEL_INPUTS], all_df[label])
 
+    # the explicit settings of the saved model, so the json stands on its own ({} in "params" means the defaults)
+    hyperparameters = {k: v for k, v in final_model.steps[-1][1].get_params().items()
+                       if isinstance(v, (int, float, str, bool)) and v == v}   # v == v drops NaN
     version = best_name.replace(" ", "_").replace("(", "").replace(")", "") + "_trained_through_" + through_str
     os.makedirs(MODEL_BANK_DIR, exist_ok=True)
     joblib.dump(final_model, os.path.join(MODEL_BANK_DIR, version + ".pkl"))
@@ -206,6 +233,10 @@ def main(snapshotdate):
             "champion_test_mae": None if champion_mae is None else round(champion_mae, 3),
             "features": MODEL_INPUTS,
             "label": label,
+            "params": params,
+            "tuning": tuning_summary,
+            "tuning_seed": seed,
+            "hyperparameters": hyperparameters,
         }, handle, indent=2)
     print("saved model to:", os.path.join(MODEL_BANK_DIR, version + ".pkl"))
 
