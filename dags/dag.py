@@ -22,7 +22,7 @@ with DAG(
     bronze_weather_table = BashOperator(
         task_id='bronze_weather_table',
         bash_command=('cd /app &&'
-                      'PYTHONPATH=/app python3 scripts/bronze_weather_table.py  '
+                      'PYTHONPATH=/app /opt/project-venv/bin/python scripts/bronze_weather_table.py  '
                       '--snapshotdate {{ ds }}'
                       )
     )
@@ -30,7 +30,7 @@ with DAG(
     silver_weather_table = BashOperator(
         task_id='silver_weather_table',
         bash_command=('cd /app && '
-                      'PYTHONPATH=/app python3 scripts/silver_weather_table.py '
+                      'PYTHONPATH=/app /opt/project-venv/bin/python scripts/silver_weather_table.py '
                       '--snapshotdate {{ ds }}'
                       )
     )
@@ -38,7 +38,7 @@ with DAG(
     bronze_trips = BashOperator(
         task_id='bronze_trips',
         bash_command=('cd /app && '
-                      'PYTHONPATH=/app python3 scripts/bronze_trips.py '
+                      'PYTHONPATH=/app /opt/project-venv/bin/python scripts/bronze_trips.py '
                       '--snapshotdate {{ ds }}'
                       )
     )
@@ -46,7 +46,7 @@ with DAG(
     silver_trips = BashOperator(
         task_id='silver_trips',
         bash_command=('cd /app && '
-                      'PYTHONPATH=/app python3 scripts/silver_trips.py '
+                      'PYTHONPATH=/app /opt/project-venv/bin/python scripts/silver_trips.py '
                       '--snapshotdate {{ ds }}'
                       )
     )
@@ -54,7 +54,7 @@ with DAG(
     gold_label_store = BashOperator(
         task_id='gold_label_store',
         bash_command=('cd /app && '
-                      'PYTHONPATH=/app python3 scripts/gold_label_store.py '
+                      'PYTHONPATH=/app /opt/project-venv/bin/python scripts/gold_label_store.py '
                       '--snapshotdate {{ ds }}'
                       )
     )
@@ -62,7 +62,7 @@ with DAG(
     gold_feature_store = BashOperator(
         task_id='gold_feature_store',
         bash_command=('cd /app && '
-                      'PYTHONPATH=/app python3 scripts/gold_feature_store.py '
+                      'PYTHONPATH=/app /opt/project-venv/bin/python scripts/gold_feature_store.py '
                       '--snapshotdate {{ ds }}'
                       )
     )

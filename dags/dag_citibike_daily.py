@@ -11,6 +11,8 @@ from airflow.sensors.filesystem import FileSensor
 # -> predict -> monitor yesterday.
 # The repo is mounted at /app in the container; scripts run from /app so datamart/ paths resolve to /app/datamart.
 APP = "/app"
+# Use isolated project dependencies, not Airflow's own Python environment.
+PYTHON = "/opt/project-venv/bin/python"
 SNAPSHOT_DATE = "{{ data_interval_end.strftime('%Y-%m-%d') }}"
 SNAPSHOT_FOLDER_DATE = "{{ data_interval_end.strftime('%Y_%m_%d') }}"
 NY = "America/New_York"
@@ -21,7 +23,7 @@ with DAG(
     default_args={"owner": "airflow", "retries": 1, "retry_delay": timedelta(minutes=1)},
     schedule_interval="0 6 * * *",
     start_date=pendulum.datetime(2016, 6, 30, tz=NY),   # first run predicts 2016-07-01 (first model is trained through 30 Jun)
-    end_date=pendulum.datetime(2017, 10, 31, tz=NY),    # stops before Nov-Dec 2017, the untouched final holdout
+    end_date=pendulum.datetime(2017, 7, 10, tz=NY),    # stops before Nov-Dec 2017, the untouched final holdout
     catchup=True,
     max_active_runs=1,
 ) as dag:
@@ -38,7 +40,7 @@ with DAG(
     retrain_model_monthly = BashOperator(
         task_id="retrain_model_monthly",
         bash_command="cd " + APP + " && if [ {{ data_interval_end.day }} -eq 1 ]; then "
-                     "PYTHONPATH=" + APP + " python3 scripts/model_train.py --snapshotdate " + SNAPSHOT_DATE + "; "
+                     "PYTHONPATH=" + APP + " " + PYTHON + " scripts/model_train.py --snapshotdate " + SNAPSHOT_DATE + "; "
                      "else echo 'not the 1st of the month, skipping retrain'; fi",
     )
 
@@ -52,7 +54,7 @@ with DAG(
 
     predict_daily = BashOperator(
         task_id="predict_daily",
-        bash_command="cd " + APP + " && PYTHONPATH=" + APP + " python3 scripts/model_predict_daily.py --snapshotdate " + SNAPSHOT_DATE,
+        bash_command="cd " + APP + " && PYTHONPATH=" + APP + " " + PYTHON + " scripts/model_predict_daily.py --snapshotdate " + SNAPSHOT_DATE,
     )
 
     # checks yesterday (its real trip counts are known now): MAE vs baseline, 7-day alert, feature drift (PSI)
