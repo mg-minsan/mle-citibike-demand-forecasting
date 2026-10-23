@@ -94,6 +94,7 @@ def main(snapshotdate):
 
     store = ModelStore()
     if store.for_cutoff(through_str) is not None:
+        store.sync_champion_alias()
         print("a complete model trained through", through_str, "is already in MLflow, nothing to do")
         return
 
