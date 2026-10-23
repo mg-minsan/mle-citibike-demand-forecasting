@@ -87,6 +87,20 @@ class ModelStore:
             raise FileNotFoundError("no MLflow model trained before and effective on " + snapshotdate)
         return max(eligible, key=lambda model: model.trained_through)
 
+    def latest_champion(self):
+        """Resolve the live alias once and pin its version for this prediction job."""
+        version = self.client.get_model_version_by_alias(self.registered_model_name, "champion")
+        run = self.client.get_run(version.run_id)
+        tags = run.data.tags
+        if (run.info.status != "FINISHED" or tags.get("citibike.ready") != "true"
+                or tags.get("promoted") != "true" or run.info.experiment_id != self.experiment_id):
+            raise ValueError("champion alias must point to a completed, published promotion in this experiment")
+        return SavedModel(
+            run.info.run_id, tags["version"],
+            f"models:/{self.registered_model_name}/{version.version}", tags["model_type"],
+            tags["trained_through"], tags["effective_from"], True,
+        )
+
     def info(self, model):
         with tempfile.TemporaryDirectory() as directory:
             path = self.client.download_artifacts(model.run_id, "training_info.json", directory)

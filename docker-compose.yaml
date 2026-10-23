@@ -20,7 +20,7 @@ services:
     ports:
       - "127.0.0.1:5000:5000"
     volumes:
-      - mlflow_data:/mlflow
+      - ./mlflow:/mlflow
     command:
       - mlflow
       - server
@@ -92,4 +92,3 @@ services:
 
 volumes:
   airflow_data:
-  mlflow_data:
