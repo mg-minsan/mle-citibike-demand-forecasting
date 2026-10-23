@@ -1,8 +1,8 @@
 """MLflow-backed models and date-aware champion history.
 
-Only successfully finished, fully published runs are visible to readers. Promotion
-is immutable metadata on each run, not a mutable 'champion' alias: backfills must
-select the champion that was effective on their snapshot date.
+Only successfully finished, fully published runs are visible to readers. The
+champion alias points to the latest promoted model. Immutable promotion tags
+preserve the champion effective on each snapshot date for historical backfills.
 """
 
 import json
@@ -95,6 +95,37 @@ class ModelStore:
     def load(self, model):
         return mlflow.sklearn.load_model(model.model_uri)
 
+    def sync_champion_alias(self):
+        """Publish the latest completed promotion, including after a retry.
+
+        Choose by effective date so replaying an older cutoff cannot move the
+        live alias back to an earlier champion.
+        """
+        champion = max(
+            (model for model in self._models() if model.promoted),
+            key=lambda model: (model.effective_from, model.trained_through),
+            default=None,
+        )
+        if champion is None:
+            return None
+        token = None
+        matches = []
+        while True:
+            page = self.client.search_model_versions(
+                filter_string=f"name = '{self.registered_model_name}'",
+                max_results=1000,
+                page_token=token,
+            )
+            matches.extend(version for version in page if version.run_id == champion.run_id)
+            token = page.token
+            if not token:
+                break
+        if not matches:
+            raise LookupError(f"No registered model version for champion run {champion.run_id}")
+        version = max(matches, key=lambda item: int(item.version)).version
+        self.client.set_registered_model_alias(self.registered_model_name, "champion", version)
+        return version
+
     def last_best_params(self, model_name, trained_through):
         eligible = sorted(
             (model for model in self._models()
@@ -112,6 +143,7 @@ class ModelStore:
         # A retry ignores failed/incomplete runs; a completed cutoff is never overwritten.
         existing = self.for_cutoff(info["trained_through"])
         if existing is not None:
+            self.sync_champion_alias()
             return existing
         with mlflow.start_run(experiment_id=self.experiment_id, run_name=version) as run:
             mlflow.set_tags({
@@ -161,4 +193,8 @@ class ModelStore:
                 run.info.run_id, version, logged.model_uri, info["model"],
                 info["trained_through"], info["retrained_on"], info["promoted"],
             )
+        # Publish the alias only after the run has successfully finished. A
+        # failure here can be repaired without retraining the completed model.
+        if saved.promoted:
+            self.sync_champion_alias()
         return saved
