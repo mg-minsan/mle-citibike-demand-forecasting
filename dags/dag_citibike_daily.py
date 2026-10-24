@@ -23,7 +23,7 @@ with DAG(
     default_args={"owner": "airflow", "retries": 1, "retry_delay": timedelta(minutes=1)},
     schedule_interval="0 6 * * *",
     start_date=pendulum.datetime(2016, 6, 30, tz=NY),   # first run predicts 2016-07-01 (first model is trained through 30 Jun)
-    end_date=pendulum.datetime(2017, 7, 10, tz=NY),    # stops before Nov-Dec 2017, the untouched final holdout
+    end_date=pendulum.datetime(2017, 10, 31, tz=NY),    # stops before Nov-Dec 2017, the untouched final holdout
     catchup=True,
     max_active_runs=1,
 ) as dag:
