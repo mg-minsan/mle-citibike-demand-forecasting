@@ -23,12 +23,12 @@ FEATURE_DIR = "datamart/gold/feature_store/"
 PREDICTIONS_DIR = "datamart/gold/predictions/"
 
 
-def main(snapshotdate):
+def main(snapshotdate, model_selection="historical"):
     print('\n\n---starting job---\n\n')
 
     # load the model and the info saved with it (the feature list guarantees the same columns, same order as training)
     store = ModelStore()
-    saved = store.for_prediction(snapshotdate)
+    saved = store.for_prediction(snapshotdate, mode=model_selection)
     model_version = saved.version
     model = store.load(saved)
     info = store.info(saved)
@@ -77,5 +77,10 @@ def main(snapshotdate):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="run job")
     parser.add_argument("--snapshotdate", type=str, required=True, help="YYYY-MM-DD")
+    parser.add_argument(
+        "--model-selection", choices=("historical", "live"),
+        default=os.getenv("MLFLOW_MODEL_SELECTION", "historical"),
+        help="historical: date-aware run tags; live: pinned champion registry alias",
+    )
     args = parser.parse_args()
-    main(args.snapshotdate)
+    main(args.snapshotdate, args.model_selection)

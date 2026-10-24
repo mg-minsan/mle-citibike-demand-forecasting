@@ -59,7 +59,10 @@ services:
       context: .
       dockerfile: Dockerfile.airflow
     depends_on:
-      - airflow-init
+      airflow-init:
+        condition: service_completed_successfully
+      mlflow:
+        condition: service_healthy
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
@@ -78,7 +81,10 @@ services:
       context: .
       dockerfile: Dockerfile.airflow
     depends_on:
-      - airflow-init
+      airflow-init:
+        condition: service_completed_successfully
+      mlflow:
+        condition: service_healthy
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
       - AIRFLOW__CORE__EXECUTOR=SequentialExecutor

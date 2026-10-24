@@ -75,7 +75,14 @@ class ModelStore:
         ]
         return max(eligible, key=lambda model: (model.effective_from, model.trained_through), default=None)
 
-    def for_prediction(self, snapshotdate):
+    def for_prediction(self, snapshotdate, mode="historical"):
+        if mode == "live":
+            saved = self.latest_champion()
+            if saved.trained_through >= snapshotdate or saved.effective_from > snapshotdate:
+                raise ValueError("champion alias is not eligible for prediction on " + snapshotdate)
+            return saved
+        if mode != "historical":
+            raise ValueError("model selection must be historical or live")
         champion = self.champion(snapshotdate, inclusive=True)
         if champion is not None:
             return champion
@@ -168,6 +175,15 @@ class ModelStore:
                 "promoted": str(info["promoted"]).lower(),
                 "test_metrics_scope": "train_validation_refit_before_final_refit",
             })
+            mlflow.set_tags({
+                "promotion_reason": info.get("promotion_reason", ""),
+                "compared_champion_version": info.get("champion_version") or "none",
+            })
+            metadata = {key: info[key] for key in ("trained_from", "train_rows") if key in info}
+            for window in ("validation_window", "test_window"):
+                if window in info:
+                    metadata[window + "_start"], metadata[window + "_end"] = info[window]
+            mlflow.log_params(metadata)
             mlflow.log_params(info.get("hyperparameters", {}))
             mlflow.log_params({"tuned." + key: value for key, value in info.get("params", {}).items()})
             metrics = {
