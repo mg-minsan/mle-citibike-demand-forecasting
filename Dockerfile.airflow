@@ -20,9 +20,13 @@ ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 WORKDIR /app
 
-# Ensure airflow can read requirements
+# Keep project/MLflow dependencies out of Airflow's Python environment.
+# In particular, Airflow's Flask-AppBuilder and MLflow's Pydantic dependencies
+# cannot safely share email-validator versions.
 COPY --chown=airflow:root --chmod=644 requirements.txt ./
+RUN mkdir -p /opt/project-venv && chown airflow:root /opt/project-venv
 
 USER airflow
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m venv /opt/project-venv && \
+    PIP_USER=false /opt/project-venv/bin/pip install --no-cache-dir -r requirements.txt

@@ -57,6 +57,7 @@ models/
 
 # Experiment tracking
 mlruns/
+mlflow/
 mlartifacts/
 wandb/
 lightning_logs/
