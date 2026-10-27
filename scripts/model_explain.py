@@ -1,23 +1,21 @@
 import argparse
-import glob
-import json
 import os
 from datetime import datetime, timedelta
 
-import joblib
 import numpy as np
 import pandas as pd
 import pyspark
-import shap
 
 import utils.data_loading_model_train as loader
+from utils.model_store import ModelStore
+from utils.monitoring_store import log_monitoring, monitoring_tables
 
 # PURPOSE
 # Monthly explanation job (SHAP). Runs after the monthly retrain and explains the model that retrain saved, on its
-# test month: which inputs drive the predictions, and did that change since the previous retrain (attribution drift)?
+# former test month (now included in the final refit): which inputs drive the predictions, and did that change since the previous retrain (attribution drift)?
 #
 # WHAT IT DOES (for the model retrained on the snapshot date)
-# 1. loads the model and its json from the model bank, and the features of its test month
+# 1. loads the model and its metadata from MLflow, and the features of its test month
 # 2. runs the pipeline's own preprocessing first, so the final estimator is explained on the columns it really sees:
 #    StationProfile turns station_id into station_mean and station_weekend_ratio (poisson regression also one-hot
 #    encodes the weekday and scales the rest; the weekday columns are added back up into fe_day_of_week)
@@ -26,7 +24,7 @@ import utils.data_loading_model_train as loader
 #    importance = mean |SHAP value| per column, share = importance / sum of importances.
 #    Raw importances are in log trips for xgboost and poisson regression (they predict log counts) and in trips
 #    for random forest, so compare models by share
-# 4. ATTRIBUTION DRIFT vs the previous retrain: shift = half the sum of the absolute share changes
+# 4. ATTRIBUTION CHANGE (an investigation signal, not a concept-drift test) vs the previous retrain: shift = half the sum of the absolute share changes
 #    (0 = the model relies on the same inputs in the same proportions, 1 = completely different inputs)
 # Writes one table per retrain to datamart/gold/monitoring/shap/model_shap_YYYY_MM_DD.parquet (one row per input).
 # Days without a retrain are skipped, so the job can be replayed over a range of days.
@@ -35,22 +33,9 @@ import utils.data_loading_model_train as loader
 # to replay every retrain in a range:      python scripts/model_explain.py --snapshotdate "2016-07-01" --enddate "2017-10-01"
 
 FEATURE_DIR = "datamart/gold/feature_store/"
-MODEL_BANK_DIR = "datamart/model_bank/"
 SHAP_DIR = "datamart/gold/monitoring/shap/"
 SAMPLE_ROWS = 2000             # SHAP on a random forest is slow, a fixed sample of the test month is enough for averages
-SHIFT_WARNING = 0.2            # attribution shift above 0.2 (a fifth of the importance moved to other inputs) is flagged
-
-
-def retrained_model(snapshotdate):
-    # the model saved by the retrain that ran on the snapshot date (promoted or not), or None
-    for path in glob.glob(os.path.join(MODEL_BANK_DIR, "*.json")):
-        if os.path.basename(path) == "champion_history.json":
-            continue
-        with open(path) as handle:
-            info = json.load(handle)
-        if info.get("retrained_on") == snapshotdate:
-            return os.path.basename(path)[:-len(".json")], info
-    return None, None
+SHIFT_WARNING = 0.2            # heuristic investigation signal, not a calibrated drift threshold
 
 
 def transformed_inputs(pipeline, X):
@@ -74,6 +59,7 @@ def transformed_inputs(pipeline, X):
 
 
 def shap_values(estimator, Xt):
+    import shap
     if hasattr(estimator, "coef_"):   # poisson regression: a linear model of the log of the prediction
         return np.asarray(shap.LinearExplainer(estimator, Xt).shap_values(Xt))
     if hasattr(estimator, "estimators_"):
@@ -84,10 +70,13 @@ def shap_values(estimator, Xt):
 
 
 def explain(snapshotdate, spark):
-    version, info = retrained_model(snapshotdate)
-    if version is None:
+    store = ModelStore()
+    cutoff = (datetime.strptime(snapshotdate, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    saved = store.for_cutoff(cutoff)
+    if saved is None or saved.effective_from != snapshotdate:
         return None
-    pipeline = joblib.load(os.path.join(MODEL_BANK_DIR, version + ".pkl"))
+    version, info = saved.version, store.info(saved)
+    pipeline = store.load(saved)
 
     # 1. the test month of that retrain, a fixed sample
     test_start, test_end = info["test_window"]
@@ -103,13 +92,14 @@ def explain(snapshotdate, spark):
     values = values.T.groupby(groups, sort=False).sum().T
     importance = values.abs().mean()
     table = pd.DataFrame({"feature": importance.index, "mean_abs_shap": importance.values})
-    table["share"] = table["mean_abs_shap"] / table["mean_abs_shap"].sum()
+    total = table["mean_abs_shap"].sum()
+    table["share"] = table["mean_abs_shap"] / total if total > 0 else 0.0
     table = table.sort_values("share", ascending=False).reset_index(drop=True)
     table["rank"] = table.index + 1
 
     # 4. attribution drift vs the previous retrain's explanation
-    previous = previous_explanation(snapshotdate)
-    if previous is None:
+    previous = previous_explanation(snapshotdate, store)
+    if previous is None or set(previous["feature"]) != set(table["feature"]):
         table["previous_share"] = np.nan
         shift, top_changed = np.nan, False
     else:
@@ -122,6 +112,9 @@ def explain(snapshotdate, spark):
     table.insert(1, "model_version", version)
     table.insert(2, "model", info["model"])
     table.insert(3, "promoted", bool(info["promoted"]))
+    table["source_run_id"] = saved.run_id
+    table["explanation_scope"] = "final_refit_on_seen_training_month"
+    table["method"] = "shap"
     table["test_window"] = test_start + " to " + test_end
     table["explained_rows"] = len(X)
     table["attribution_shift"] = shift
@@ -131,28 +124,29 @@ def explain(snapshotdate, spark):
           "| test month", test_start, "to", test_end, "|", len(X), "rows")
     for _, row in table.head(8).iterrows():
         print(f"   {row['rank']:>2}. {row['feature']:<24} share {row['share']:6.1%}")
-    if previous is None:
-        print("   attribution shift: no earlier explanation to compare with")
+    if not np.isfinite(shift):
+        print("   attribution shift: no comparable earlier explanation")
     else:
         print(f"   attribution shift vs previous retrain: {shift:.3f}", "| top feature changed" if top_changed else "")
         if shift > SHIFT_WARNING:
-            print("ALERT", snapshotdate, "attribution drift: the model relies on different inputs than last month (shift",
+            print("INVESTIGATE", snapshotdate, "attribution change across models/months; not a concept-drift test (shift",
                   round(shift, 3), ")")
 
     os.makedirs(SHAP_DIR, exist_ok=True)
     filepath = os.path.join(SHAP_DIR, "model_shap_" + snapshotdate.replace("-", "_") + ".parquet")
     spark.createDataFrame(table).coalesce(1).write.mode("overwrite").parquet(filepath)
+    log_monitoring(store, "shap", snapshotdate, saved.run_id, version,
+                   {"attribution_shift": shift},
+                   tags={"explanation_scope": "final_refit_on_seen_training_month", "method": "shap"},
+                   table=table, artifact_path=filepath)
     print("saved to:", filepath)
     return table
 
 
-def previous_explanation(snapshotdate):
-    # the latest explanation written before this retrain, as pandas, or None
-    earlier = [path for path in sorted(glob.glob(os.path.join(SHAP_DIR, "model_shap_*.parquet")))
-               if os.path.basename(path)[len("model_shap_"):-len(".parquet")] < snapshotdate.replace("-", "_")]
-    if len(earlier) == 0:
-        return None
-    return pd.read_parquet(earlier[-1])
+def previous_explanation(snapshotdate, store):
+    earlier = [table for table in monitoring_tables(store, "shap")
+               if str(table["retrained_on"].iloc[0]) < snapshotdate]
+    return max(earlier, key=lambda table: str(table["retrained_on"].iloc[0]), default=None)
 
 
 def main(snapshotdate, enddate):

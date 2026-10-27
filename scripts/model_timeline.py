@@ -1,5 +1,3 @@
-import glob
-import json
 import os
 
 import matplotlib
@@ -7,30 +5,29 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from utils.model_store import ModelStore
+from utils.monitoring_store import monitoring_tables
+
 # PURPOSE
-# Model timeline for the report and dashboard: one row per monthly retrain from the model bank jsons, with the test
+# Model timeline for the report and dashboard: one row per monthly retrain from the MLflow training runs, with the test
 # MAE of the retrained model vs the lag-7 baseline on the same test month, whether it was promoted, and (when
 # model_explain.py has run) its top SHAP input and attribution shift. Also compares the same test months a year
-# apart (Jun-Sep 2016 vs Jun-Sep 2017). Read-only on the model bank.
+# apart (Jun-Sep 2016 vs Jun-Sep 2017). Read-only on MLflow.
 # Writes datamart/gold/monitoring/model_timeline.parquet (the table) and model_timeline.png (the chart).
 #
 # to call this script (from the repo root): python scripts/model_timeline.py
 
-MODEL_BANK_DIR = "datamart/model_bank/"
 MONITORING_DIR = "datamart/gold/monitoring/"
-SHAP_DIR = os.path.join(MONITORING_DIR, "shap/")
 
 
-def read_retrains():
+def read_retrains(store):
     rows = []
-    for path in glob.glob(os.path.join(MODEL_BANK_DIR, "*.json")):
-        if os.path.basename(path) == "champion_history.json":
-            continue
-        with open(path) as handle:
-            info = json.load(handle)
+    for saved in store.models():
+        info = store.info(saved)
         rows.append({
             "retrained_on": info["retrained_on"],
-            "model_version": os.path.basename(path)[:-len(".json")],
+            "model_version": saved.version,
+            "source_run_id": saved.run_id,
             "model": info["model"],
             "test_month": info["test_window"][0][:7],
             "test_model_mae": info["test_model_mae"],
@@ -38,20 +35,21 @@ def read_retrains():
             "champion_test_mae": info.get("champion_test_mae"),
             "promoted": bool(info["promoted"]),
         })
+    if not rows:
+        return pd.DataFrame()
     df = pd.DataFrame(rows).sort_values("retrained_on").reset_index(drop=True)
     df["vs_baseline"] = ((1 - df["test_model_mae"] / df["test_baseline_mae"]) * 100).round(1)
     return df
 
 
-def add_shap(df):
-    # top input and attribution shift per retrain, when the explanation exists
-    paths = glob.glob(os.path.join(SHAP_DIR, "model_shap_*.parquet"))
-    if len(paths) == 0:
+def add_shap(df, store):
+    tables = monitoring_tables(store, "shap")
+    if not tables:
         return df
-    shap = pd.concat([pd.read_parquet(p) for p in paths], ignore_index=True)
-    top = shap[shap["rank"] == 1][["model_version", "feature", "share", "attribution_shift"]] \
-        .rename(columns={"feature": "top_shap_feature", "share": "top_shap_share"})
-    return df.merge(top, on="model_version", how="left")
+    shap = pd.concat(tables, ignore_index=True)
+    top = shap[shap["rank"] == 1][["source_run_id", "feature", "share", "attribution_shift"]].rename(
+        columns={"feature": "top_shap_feature", "share": "top_shap_share"})
+    return df.merge(top, on="source_run_id", how="left", validate="one_to_one")
 
 
 def plot(df, path):
@@ -77,10 +75,12 @@ def plot(df, path):
 
 
 def main():
-    if not os.path.isdir(MODEL_BANK_DIR):
-        print("no model bank found in", MODEL_BANK_DIR)
+    store = ModelStore()
+    df = read_retrains(store)
+    if df.empty:
+        print("no completed published training runs in MLflow")
         return
-    df = add_shap(read_retrains())
+    df = add_shap(df, store)
     pd.set_option("display.width", 250)
     pd.set_option("display.max_columns", 20)
     print(len(df), "retrains,", int(df["promoted"].sum()), "promoted\n")

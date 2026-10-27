@@ -17,6 +17,9 @@ MONITORING_DIR = "datamart/gold/monitoring/"
 
 def segment_table(df):
     # mean daily MAE of the model and the baseline for each segment
+    df = df.copy()
+    for column in ("is_weekend", "is_holiday", "is_rain_day"):
+        df[column] = df[column].astype("boolean")
     rows = []
     for name, mask in [("weekday", ~df["is_weekend"]), ("weekend", df["is_weekend"]),
                        ("not a holiday", ~df["is_holiday"]), ("holiday", df["is_holiday"]),
@@ -47,6 +50,7 @@ def main():
     # 1. month by month
     summary = df.groupby("month").agg(
         days=("monitored_date", "count"),
+        scored_days=("model_mae", "count"),
         model_mae=("model_mae", "mean"),
         baseline_mae=("baseline_mae", "mean"),
         expected_mae=("expected_mae", "last"),
