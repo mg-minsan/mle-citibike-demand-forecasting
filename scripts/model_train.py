@@ -17,6 +17,7 @@ import utils.data_loading_model_train as loader
 import utils.model_tuning as tuning
 from utils.feature_importance import measure_feature_importance
 from utils.model_store import ModelStore
+from utils.model_monitoring import psi_reference
 from utils.station_profile import StationProfile
 
 # PURPOSE
@@ -218,6 +219,7 @@ def main(snapshotdate):
         "tuning_seed": seed,
         "hyperparameters": hyperparameters,
         "feature_importance": importance,
+        "psi_reference": psi_reference(all_df),
     }
     saved = store.save(final_model, info, version, input_example=all_df[MODEL_INPUTS].head(5))
     print("saved model to:", saved.model_uri, "| run:", saved.run_id)

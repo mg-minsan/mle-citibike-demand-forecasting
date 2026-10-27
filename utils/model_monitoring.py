@@ -1,4 +1,3 @@
-import glob
 import json
 import os
 from datetime import datetime, timedelta
@@ -7,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 import utils.data_loading_model_train as loader
+from utils.prediction_monitoring import daily_performance, rolling_performance
 
 # PURPOSE
 # Helpers for the daily monitoring job (scripts/model_monitor_daily.py). Monitoring looks at a day whose real trip
@@ -21,7 +21,6 @@ import utils.data_loading_model_train as loader
 PREDICTIONS_DIR = "datamart/gold/predictions/"
 LABEL_DIR = "datamart/gold/label_store/"
 FEATURE_DIR = "datamart/gold/feature_store/"
-MODEL_BANK_DIR = "datamart/model_bank/"
 MONITORING_DIR = "datamart/gold/monitoring/"
 REFERENCE_DIR = os.path.join(MONITORING_DIR, "psi_reference/")
 
@@ -47,30 +46,19 @@ def partition_path(directory, prefix, date_str):
 def read_partition(spark, directory, prefix, date_str):
     # one dated partition as pandas, or None if that day was not written
     path = partition_path(directory, prefix, date_str)
-    if not os.path.isdir(path):
+    if not os.path.isfile(os.path.join(path, "_SUCCESS")):
         return None
     return spark.read.parquet(path).toPandas()
 
 
-def read_model_info(model_version):
-    with open(os.path.join(MODEL_BANK_DIR, model_version + ".json")) as handle:
-        return json.load(handle)
-
-
-def expected_mae(model_version, model_info, monitored_date):
-    # the MAE the production model is expected to have, measured on the most recent month it was scored on.
-    # At first that is its own test month. Each monthly retrain also re-scores the champion on the newest month
-    # (champion_test_mae in the candidate's json), so while the champion stays, its expected MAE is refreshed every
-    # month. Without this, a model tested on a quiet winter month would be judged against winter errors all summer.
+def expected_mae(store, model_version, model_info, monitored_date):
+    # Only information available by the historical monitored date may refresh the expectation.
     best = (model_info["retrained_on"], model_info["test_model_mae"], model_info["test_window"])
-    for path in glob.glob(os.path.join(MODEL_BANK_DIR, "*.json")):
-        if os.path.basename(path) == "champion_history.json":
+    for saved in store.models():
+        if not best[0] < saved.effective_from <= monitored_date:
             continue
-        with open(path) as handle:
-            info = json.load(handle)
-        if info.get("champion_version") != model_version or info.get("champion_test_mae") is None:
-            continue
-        if best[0] < info["retrained_on"] <= monitored_date:
+        info = store.info(saved)
+        if info.get("champion_version") == model_version and info.get("champion_test_mae") is not None:
             best = (info["retrained_on"], info["champion_test_mae"], info["test_window"])
     return {"expected_mae": float(best[1]), "expected_mae_window": best[2][0] + " to " + best[2][1]}
 
@@ -78,31 +66,27 @@ def expected_mae(model_version, model_info, monitored_date):
 # ---------- 1. model quality ----------
 
 def score_day(predictions, labels, features):
-    # join predictions with the real trip counts and compute the day's errors (stations without a label are counted
-    # by the data quality check instead)
-    df = predictions.merge(labels[["station_id", "label"]], on="station_id", how="inner")
-    if len(df) == 0:
-        raise ValueError("no prediction matches a label, nothing to score")
-    model_error = df["model_prediction"] - df["label"]
-    baseline_error = df["baseline_prediction"] - df["label"]
-
-    # busy vs quiet stations: is the model equally good for both? (bias / fairness check across station groups)
-    df = df.merge(features[["station_id", "fe_rolling_mean_28"]], on="station_id", how="left")
-    cutoff = df["fe_rolling_mean_28"].quantile(1 - BUSY_SHARE)
-    busy = df["fe_rolling_mean_28"] >= cutoff
-
-    return {
-        "stations": int(len(df)),
-        "actual_trips": int(df["label"].sum()),
-        "predicted_trips": round(float(df["model_prediction"].sum()), 1),
-        "model_mae": float(model_error.abs().mean()),
-        "baseline_mae": float(baseline_error.abs().mean()),
-        "model_rmse": float(np.sqrt((model_error ** 2).mean())),
-        "baseline_rmse": float(np.sqrt((baseline_error ** 2).mean())),
-        "model_bias": float(model_error.mean()),           # > 0 over-predicts, < 0 under-predicts
-        "busy_stations_mae": float(model_error[busy].abs().mean()),
-        "quiet_stations_mae": float(model_error[~busy].abs().mean()),
-    }
+    daily = daily_performance(predictions, labels)
+    if len(daily) != 1:
+        raise ValueError("Expected one day per monitoring partition")
+    keys = ["snapshot_date", "station_id"]
+    frames = [table.copy() for table in (predictions, labels, features)]
+    for table in frames:
+        table["snapshot_date"] = pd.to_datetime(table["snapshot_date"]).dt.normalize()
+    predictions, labels, features = frames
+    if features[keys].isna().any().any() or features.duplicated(keys).any():
+        raise ValueError("Expected unique, non-null feature station/day keys")
+    df = predictions.merge(labels[keys + ["label"]], on=keys, validate="one_to_one")
+    df = df.merge(features[keys + ["fe_rolling_mean_28"]], on=keys, how="outer",
+                  validate="one_to_one", indicator=True)
+    if not df["_merge"].eq("both").all() or not np.isfinite(df["fe_rolling_mean_28"]).all():
+        raise ValueError("Feature station/day coverage differs or station history is invalid")
+    errors = (df["model_prediction"] - df["label"]).abs()
+    busy = df["fe_rolling_mean_28"] >= df["fe_rolling_mean_28"].quantile(1 - BUSY_SHARE)
+    row = daily.iloc[0].drop(labels=["snapshot_date", "model_version", "model_changed"]).to_dict()
+    row.update(stations=int(row["station_count"]), actual_trips=float(row["actual_demand"]),
+               busy_stations_mae=float(errors[busy].mean()), quiet_stations_mae=float(errors[~busy].mean()))
+    return row
 
 
 def day_segments(features):
@@ -129,7 +113,7 @@ def data_quality(predictions, labels, features, missing_feature_partitions):
         "predictions_without_label": int(unmatched),
         "duplicate_prediction_stations": int(predictions["station_id"].duplicated().sum()),
         "null_feature_values": int(features[feature_columns].isna().sum().sum()),
-        "null_or_negative_predictions": int((predictions["model_prediction"].isna() | (predictions["model_prediction"] < 0)).sum()),
+        "null_or_negative_predictions": int((~np.isfinite(predictions["model_prediction"]) | (predictions["model_prediction"] < 0)).sum()),
         "missing_feature_partitions": int(missing_feature_partitions),
     }
     problems = []
@@ -160,11 +144,18 @@ def previous_monitoring_rows(spark, monitored_date, days):
 def rolling_status(today, previous_rows, model_info, expected):
     # 7-day rolling MAE (today + up to 6 earlier days) and the alert level
     window = pd.concat([pd.DataFrame([today])] + previous_rows, ignore_index=True)
-    rolling_model_mae = float(window["model_mae"].mean())
-    rolling_baseline_mae = float(window["baseline_mae"].mean())
+    end = pd.Timestamp(today["monitored_date"])
+    dates = pd.to_datetime(window["monitored_date"])
+    window = window[(dates > end - pd.Timedelta(days=ROLLING_DAYS)) & (dates <= end)].copy()
+    window["snapshot_date"] = window["monitored_date"]
+    rolling = rolling_performance(window, ROLLING_DAYS).iloc[-1]
+    rolling_model_mae = float(rolling.get("rolling_model_mae", np.nan))
+    rolling_baseline_mae = float(rolling.get("rolling_baseline_mae", np.nan))
     threshold = WARNING_FACTOR * expected["expected_mae"]
 
-    if rolling_model_mae >= rolling_baseline_mae:
+    if not np.isfinite(today["model_mae"]):
+        status, reason = "not_scored", "incomplete or invalid station/day data"
+    elif rolling_model_mae >= rolling_baseline_mae:
         status, reason = "critical", "the model is no better than the lag-7 baseline over the last days"
     elif rolling_model_mae > threshold:
         status, reason = "warning", "7-day MAE is more than " + str(round((WARNING_FACTOR - 1) * 100)) + "% above the model's expected MAE"
@@ -172,7 +163,7 @@ def rolling_status(today, previous_rows, model_info, expected):
         status, reason = "ok", "within limits"
 
     return {
-        "rolling_days": int(len(window)),
+        "rolling_days": int(window["model_mae"].notna().sum()),
         "rolling_model_mae": rolling_model_mae,
         "rolling_baseline_mae": rolling_baseline_mae,
         "model_test_mae": float(model_info["test_model_mae"]),
@@ -197,17 +188,23 @@ def build_psi_reference(spark, model_version, model_info):
     print("building PSI reference from the training data of", model_version)
     train = loader.load_feature_dataset(model_info["trained_from"], model_info["trained_through"],
                                         FEATURE_DIR, spark).select(*PSI_FEATURES).toPandas()
-    reference = {}
-    for feature in PSI_FEATURES:
-        values = train[feature].astype(float).values
-        # quantile edges; repeated edges (features with many zeros) are merged, so some features get fewer bins
-        edges = np.unique(np.quantile(values, np.linspace(0, 1, PSI_BINS + 1)[1:-1]))
-        shares = bin_shares(values, edges)
-        reference[feature] = {"edges": edges.tolist(), "shares": shares.tolist()}
+    reference = psi_reference(train)
 
     with open(path + ".tmp", "w") as handle:
         json.dump(reference, handle)
     os.replace(path + ".tmp", path)
+    return reference
+
+
+def psi_reference(train):
+    """Construct the frozen reference from final training inputs."""
+    reference = {}
+    for feature in PSI_FEATURES:
+        values = train[feature].to_numpy(dtype=float)
+        if not len(values) or not np.isfinite(values).all():
+            raise ValueError("PSI reference requires non-empty finite training features")
+        edges = np.unique(np.quantile(values, np.linspace(0, 1, PSI_BINS + 1)[1:-1]))
+        reference[feature] = {"edges": edges.tolist(), "shares": bin_shares(values, edges).tolist()}
     return reference
 
 
@@ -230,8 +227,13 @@ def drift_status(spark, monitored_date, reference):
     end = datetime.strptime(monitored_date, "%Y-%m-%d").date()
     days = [(end - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(DRIFT_DAYS)]
     paths = [partition_path(FEATURE_DIR, "gold_feature_store_", day) for day in days]
-    found = [path for path in paths if os.path.isdir(path)]
-    recent = spark.read.parquet(*found).select(*PSI_FEATURES).toPandas()
+    found = [path for path in paths if os.path.isfile(os.path.join(path, "_SUCCESS"))]
+    recent = (spark.read.parquet(*found).select(*PSI_FEATURES).toPandas()
+              if found else pd.DataFrame(columns=PSI_FEATURES))
+    if recent.empty or not np.isfinite(recent.to_numpy(dtype=float)).all():
+        return {"drift_window_days": len(found), "missing_feature_partitions": len(paths) - len(found),
+                "max_psi": np.nan, "max_psi_feature": "", "drift_status": "unavailable",
+                "features_significant_drift": 0}
 
     result = {"drift_window_days": len(found), "missing_feature_partitions": len(paths) - len(found)}
     for feature in PSI_FEATURES:

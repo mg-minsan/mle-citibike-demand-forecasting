@@ -64,6 +64,20 @@ class ModelStore:
             if not token:
                 break
 
+    def models(self):
+        """Completed published training runs, for reporting and historical monitoring."""
+        return list(self._models())
+
+    def for_run(self, run_id):
+        """Resolve the exact training run recorded in a prediction partition."""
+        run = self.client.get_run(run_id)
+        tags = run.data.tags
+        if (run.info.status != "FINISHED" or tags.get("citibike.ready") != "true"
+                or run.info.experiment_id != self.experiment_id):
+            raise ValueError("Prediction source must be a published training run in this experiment")
+        return SavedModel(run_id, tags["version"], tags["model_uri"], tags["model_type"],
+                          tags["trained_through"], tags["effective_from"], tags["promoted"] == "true")
+
     def for_cutoff(self, trained_through):
         return next((model for model in self._models() if model.trained_through == trained_through), None)
 
@@ -197,6 +211,8 @@ class ModelStore:
                     metrics[metric + "/" + re.sub(r"[^a-zA-Z0-9_-]", "_", name)] = value
             mlflow.log_metrics(metrics)
             mlflow.log_dict(info, "training_info.json")
+            if "psi_reference" in info:
+                mlflow.log_dict(info["psi_reference"], "monitoring/psi_reference.json")
             if "feature_importance" in info:
                 log_feature_importance(info["feature_importance"])
             signature = None
