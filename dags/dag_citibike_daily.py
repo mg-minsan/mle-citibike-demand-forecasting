@@ -8,7 +8,7 @@ from airflow.sensors.filesystem import FileSensor
 # daily prediction at 06:00 New York time, plus monthly retraining on the 1st of each month.
 # Each run predicts for the day it fires on (data_interval_end), e.g. the run that fires 2016-07-01 06:00 predicts
 # 2016-07-01. Tasks: wait for that day's gold feature partition -> retrain and explain (1st of the month only)
-# -> predict -> monitor yesterday; optional SHAP runs separately after retraining.
+# -> predict -> export business CSV and monitor yesterday; optional SHAP runs separately after retraining.
 # The repo is mounted at /app in the container; scripts run from /app so datamart/ paths resolve to /app/datamart.
 APP = "/app"
 # Use isolated project dependencies, not Airflow's own Python environment.
@@ -57,6 +57,11 @@ with DAG(
         bash_command="cd " + APP + " && PYTHONPATH=" + APP + " " + PYTHON + " scripts/model_predict_daily.py --snapshotdate " + SNAPSHOT_DATE,
     )
 
+    export_predictions_csv = BashOperator(
+        task_id="export_predictions_csv",
+        bash_command="cd " + APP + " && PYTHONPATH=" + APP + " " + PYTHON + " scripts/export_predictions_csv.py --snapshotdate " + SNAPSHOT_DATE,
+    )
+
     # checks yesterday (its real trip counts are known now): MAE vs baseline, 7-day alert, feature drift (PSI)
     monitor_daily = BashOperator(
         task_id="monitor_daily",
@@ -64,4 +69,5 @@ with DAG(
     )
 
     wait_for_feature_partition >> retrain_model_monthly >> predict_daily >> monitor_daily
+    predict_daily >> export_predictions_csv
     retrain_model_monthly >> explain_model_monthly
