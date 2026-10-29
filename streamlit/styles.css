@@ -1,0 +1,24 @@
+.stApp { background: #f3f7fb; }
+[data-testid="stHeader"] { background: #f3f7bf00; }
+.block-container { padding-top: 2rem; max-width: 1440px; }
+h1, h2, h3 { color: #003b71; letter-spacing: -0.025em; }
+[data-testid="stSidebar"] { background: #fff; border-right: 1px solid #dbe5ef; }
+[data-testid="stSidebar"] h1 { font-size: 1.2rem; }
+.bike-brand { color: #004b87; font-size: 2.4rem; font-weight: 800; letter-spacing: -2px; padding: 1rem 0 .1rem; }
+.bike-brand span { position: relative; }
+.bike-brand span::before { content: ''; position: absolute; width: 45px; height: 16px; border-top: 4px solid #e5243b; border-radius: 50%; left: 5px; top: -4px; }
+.brand-caption { color: #536b82; text-transform: uppercase; font-size: .65rem; letter-spacing: .16em; margin: .3rem 0 2rem; }
+.forecast-hero { position: relative; overflow: hidden; background: linear-gradient(110deg, #003b71, #0074c8); border-radius: 20px; padding: 2.5rem 3rem; margin-bottom: 1.5rem; color: white; }
+.forecast-hero::after { content: ''; position: absolute; right: -70px; top: -100px; width: 400px; height: 400px; border: 48px solid #ffffff0d; border-radius: 50%; pointer-events: none; }
+.forecast-hero .eyebrow { color: #bde4ff; font-size: .72rem; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; }
+.forecast-hero h1 { color: #fff; font-size: clamp(2rem, 4vw, 3.2rem); margin: .65rem 0; padding: 0; line-height: 1.12; }
+.forecast-hero p { color: #e0effb; max-width: 620px; margin: .6rem 0 0; font-size: 1rem; }
+[data-testid="stMetric"] { background: #fff; border: 1px solid #dbe5ef; border-top: 4px solid #0074c8; border-radius: 14px; padding: 1.2rem 1.4rem; box-shadow: 0 4px 16px #003b7105; }
+[data-testid="stMetricLabel"] { color: #526b82; }
+[data-testid="stMetricValue"] { color: #003b71; font-weight: 750; }
+[data-testid="stVerticalBlockBorderWrapper"] > div { border-radius: 14px; }
+[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
+[data-testid="stDownloadButton"] button { background: #0074c8; border: 1px solid #0074c8; color: white; border-radius: 8px; font-weight: 600; }
+[data-testid="stDownloadButton"] button:hover { background: #003b71; color: white; border-color: #003b71; }
+[data-testid="stSidebar"] [data-testid="stButton"] button { width: 100%; color: #005b9e; border-color: #bdd3e6; border-radius: 8px; }
+@media (max-width: 640px) { .forecast-hero { padding: 1.7rem 1.4rem; } .block-container { padding-left: 1rem; padding-right: 1rem; } }
