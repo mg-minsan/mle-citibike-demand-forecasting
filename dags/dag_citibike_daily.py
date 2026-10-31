@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
+from airflow.operators.empty import EmptyOperator
 from airflow.sensors.filesystem import FileSensor
 
 # daily prediction at 06:00 New York time, plus monthly retraining on the 1st of each month.
@@ -62,6 +63,9 @@ with DAG(
         bash_command="cd " + APP + " && PYTHONPATH=" + APP + " " + PYTHON + " scripts/export_predictions_csv.py --snapshotdate " + SNAPSHOT_DATE,
     )
 
+    # Placeholder for future business email delivery; no email is sent.
+    email_predictions = EmptyOperator(task_id="email_predictions")
+
     # checks yesterday (its real trip counts are known now): MAE vs baseline, 7-day alert, feature drift (PSI)
     monitor_daily = BashOperator(
         task_id="monitor_daily",
@@ -69,5 +73,5 @@ with DAG(
     )
 
     wait_for_feature_partition >> retrain_model_monthly >> predict_daily >> monitor_daily
-    predict_daily >> export_predictions_csv
+    predict_daily >> export_predictions_csv >> email_predictions
     retrain_model_monthly >> explain_model_monthly

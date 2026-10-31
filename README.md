@@ -93,6 +93,9 @@ generated before exporting. Missing names fail the export rather than dropping
 stations. Reruns replace that day's CSV. The standalone export command above can
 also export existing prediction partitions without rerunning the model.
 
+After CSV export succeeds, `email_predictions` runs as an Airflow
+`EmptyOperator` placeholder for future email delivery. It does not send email.
+
 ## Streamlit prediction dashboard
 
 The dashboard (`streamlit/app.py`) displays the business CSVs named
