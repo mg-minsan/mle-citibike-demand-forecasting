@@ -81,6 +81,7 @@ def explain(snapshotdate, spark):
     # 1. the test month of that retrain, a fixed sample
     test_start, test_end = info["test_window"]
     features = loader.load_feature_dataset(test_start, test_end, FEATURE_DIR, spark).toPandas()
+    features = features.sort_values(["snapshot_date", "station_id"]).reset_index(drop=True)
     X = features[info["features"]].sample(n=min(SAMPLE_ROWS, len(features)), random_state=42)
 
     # 2. the columns the final estimator sees

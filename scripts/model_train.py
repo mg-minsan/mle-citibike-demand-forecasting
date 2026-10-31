@@ -57,6 +57,11 @@ def rmse(actual, predicted):
     return float(np.sqrt(mean_squared_error(actual, predicted)))
 
 
+def sorted_rows(df):
+    # Spark returns joined rows in no fixed order, and random forest and XGBoost sample rows by position
+    return df.sort_values(["snapshot_date", "station_id"]).reset_index(drop=True)
+
+
 def build_candidates():
     # every candidate starts with StationProfile (two per-station features learned from the training rows only)
     poisson = make_pipeline(
@@ -69,7 +74,7 @@ def build_candidates():
     )
     forest = make_pipeline(
         StationProfile(),
-        RandomForestRegressor(n_estimators=200, min_samples_leaf=5, n_jobs=-1, random_state=42),
+        RandomForestRegressor(n_estimators=200, min_samples_leaf=20, n_jobs=-1, random_state=42),
     )
     xgboost = make_pipeline(
         StationProfile(),
@@ -114,9 +119,9 @@ def main(snapshotdate):
         .getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
 
-    train_df = loader.load_model_dataset(TRAIN_START, fmt(train_end), FEATURE_DIR, LABEL_DIR, spark).toPandas()
-    valid_df = loader.load_model_dataset(fmt(valid_start), fmt(valid_end), FEATURE_DIR, LABEL_DIR, spark).toPandas()
-    test_df = loader.load_model_dataset(fmt(test_start), through_str, FEATURE_DIR, LABEL_DIR, spark).toPandas()
+    train_df = sorted_rows(loader.load_model_dataset(TRAIN_START, fmt(train_end), FEATURE_DIR, LABEL_DIR, spark).toPandas())
+    valid_df = sorted_rows(loader.load_model_dataset(fmt(valid_start), fmt(valid_end), FEATURE_DIR, LABEL_DIR, spark).toPandas())
+    test_df = sorted_rows(loader.load_model_dataset(fmt(test_start), through_str, FEATURE_DIR, LABEL_DIR, spark).toPandas())
     spark.stop()
 
     label = loader.LABEL_COLUMN
