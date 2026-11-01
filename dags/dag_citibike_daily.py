@@ -33,8 +33,8 @@ with DAG(
         task_id="wait_for_feature_partition",
         filepath=APP + "/datamart/gold/feature_store/gold_feature_store_" + SNAPSHOT_FOLDER_DATE + ".parquet/_SUCCESS",
         fs_conn_id="fs_default",
-        poke_interval=30,
-        timeout=60 * 60,
+        poke_interval=300,
+        timeout=60 * 60 * 12,
         mode="reschedule",
     )
 
@@ -63,6 +63,11 @@ with DAG(
         bash_command="cd " + APP + " && PYTHONPATH=" + APP + " " + PYTHON + " scripts/export_predictions_csv.py --snapshotdate " + SNAPSHOT_DATE,
     )
 
+    ensure_station_lookup = BashOperator(
+        task_id="ensure_station_lookup",
+        bash_command="cd " + APP + " && [ -f data/stations.csv ] || " + PYTHON + " scripts/extract_stations.py",
+    )
+
     # Placeholder for future business email delivery; no email is sent.
     email_predictions = EmptyOperator(task_id="email_predictions")
 
@@ -73,5 +78,5 @@ with DAG(
     )
 
     wait_for_feature_partition >> retrain_model_monthly >> predict_daily >> monitor_daily
-    predict_daily >> export_predictions_csv >> email_predictions
+    [predict_daily, ensure_station_lookup] >> export_predictions_csv >> email_predictions
     retrain_model_monthly >> explain_model_monthly

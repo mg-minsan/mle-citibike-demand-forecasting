@@ -27,7 +27,7 @@ SEARCH_SPACES = {
         "xgbregressor__gamma": uniform(0, 1),
     },
     "random forest": {
-        "randomforestregressor__min_samples_leaf": randint(2, 30),
+        "randomforestregressor__min_samples_leaf": randint(15, 51),
         "randomforestregressor__max_features": uniform(0.3, 0.7),
         "randomforestregressor__max_depth": [None, 12, 20, 30],
     },
